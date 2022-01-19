@@ -1,0 +1,893 @@
+---
+title: "text analysis"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+The goal of this project is to perform keyword network analysis and word frequency analysis to draw insights from data
+
+
+#Importing the libraries
+```{r}
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(janeaustenr)
+library(ggplot2)
+library(tidyr)
+library(igraph)
+library(ggraph)
+library(data.table)
+
+```
+
+
+
+Task 1
+
+The objective of this task is to build an adjacency matrix for the keywords in an article and convert the adjacency matrix to a weighted network. After that, we will compute the strength and degree of the network and show the top keywords by strength and degree. Then, we will find out the top keyword pairs by finding top weighted edges. Finally, by plotting the average strength and degree, we will analyze the network.
+
+Computing keyword co-occurrence matrix
+```{r}
+
+Keyword_data <- read.csv("/Users/bardia/Desktop/Keyword_data.csv", na.strings = "")
+
+# Stack all variables to find unique
+s<-stack(Keyword_data)
+# Calculate unique keywords
+u<-unique(s$values)
+# Create a weighted adjacency matrix
+answer<-matrix(0, nrow=length(u), ncol=length(u))
+colnames(answer)<-u
+rownames(answer)<-u
+# Logic to create weighted matrix
+for(i in 1:length(Keyword_data$Keyword.2)){
+  temp<-unlist(Keyword_data[i,])
+  temp<-temp[!is.na(temp)]
+  keyword_list<-combn(temp,2)
+  for(j in 1:length(keyword_list[1,])){
+    rowind<-which(rownames(answer)==(keyword_list[1,j]))
+    colind<-which(colnames(answer)==(keyword_list[2,j]))
+    answer[rowind,colind]<-answer[rowind,colind]+1
+    answer[colind,rowind]<-answer[colind,rowind]+1
+  }
+
+  
+}
+
+
+```
+
+
+Converting the adjacency matrix to a weighted network and computing the degree and strength
+
+```{r}
+#creating the network from adjacency matrix
+ad_mat <- answer
+network <- graph_from_adjacency_matrix(ad_mat, mode="undirected", weighted=TRUE)
+
+#edge_attr(network)
+#vertex_attr(network)
+
+#degree and strength of the netwrok
+deg <- degree(network)
+strength <- strength(network)
+```
+
+Top 10 nodes by degree and strength
+
+```{r}
+#Top ten nodes by degree and strength
+top_deg <- as.data.frame(sort(deg, decreasing = TRUE)[1:10])
+colnames(top_deg) <- "top degree nodes"
+print(top_deg)
+top_strength <- as.data.frame(sort(strength, decreasing = TRUE)[1:10])
+colnames(top_strength) <- "top strength nodes"
+print(top_strength)
+```
+
+Computing top 10 pairs of keyword (top 10 edges)
+
+```{r}
+#FINDING TOP TEN EDGES BY WEIGHT
+min_w <- min(sort(E(network)$weight, decreasing = TRUE)[1:10])
+top_edges <-  ends(network, E(network)[E(network)$weight >= min_w], names = TRUE)
+top_edges <- as.data.frame(top_edges)
+for(i in 1:dim(top_edges)[1]){
+  top_edges[i,3] <- E(network)$weight[get.edge.ids(network,c(top_edges[i,1],top_edges[i,2]))]
+}
+colnames(top_edges) <- c("node1", "node2", "weight")
+top_edges <- top_edges %>% arrange(desc(weight))
+print(top_edges[1:10,])
+```
+
+Plotting average strength by degree
+
+```{r}
+#plot
+plt_df <- data_frame(degree=deg, strength=(strength))
+plt_df <- plt_df %>% group_by(degree) %>% mutate(count= n())
+plt_df <- plt_df %>% group_by(degree) %>% mutate(sum_strength= sum(strength))
+plt_df <- plt_df %>% mutate(average_strength= sum_strength/count)
+
+plt_df %>%
+  ggplot(aes(degree, average_strength, main="hh")) +
+  geom_point() + 
+  labs(title = "Average strength by degree", x="k", y="<s>")+
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+
+
+
+TASK 2
+
+The objective of this task is to perform word frequency analysis on twitter data (Elon Musk's tweets) from 2017-2021. First, we will compute the word frequencies for each year with and without stop words. After that we will plot the word frequencies for each year. Then, we will use Zipf’s law to analyze the data by plotting world frequency by rank. The final task is to create bigram network graphs for each year.
+
+#READING FILES
+```{r}
+df_2017<-read.csv("/Users/bardia/Desktop/Project 2/Tweeter data/2017.csv")
+df_2018<-read.csv("/Users/bardia/Desktop/Project 2/Tweeter data/2018.csv")
+df_2019<-read.csv("/Users/bardia/Desktop/Project 2/Tweeter data/2019.csv")
+df_2020<-read.csv("/Users/bardia/Desktop/Project 2/Tweeter data/2020.csv")
+df_2021<-read.csv("/Users/bardia/Desktop/Project 2/Tweeter data/2021.csv")
+```
+
+2017 twitter data
+
+Word frequency for 2017
+```{r}
+data_2017<-df_2017%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)
+
+```
+
+Excluding stop words
+```{r}
+data_2017<-data_2017 %>%
+  anti_join(stop_words,by="word")
+```
+
+Excluding irrelevant words to the analysis such as t.co, https, http
+```{r}
+irr <- c("t.co","http","https","it’s","don’t","you’re")
+data_2017<- data_2017 %>%
+  filter(!word %in% irr)
+```
+
+Displaying top 10 words by highest value of word frequency for the year 2017
+```{r}
+top_2017 <- head(data_2017,10)
+top_2017
+```
+
+
+Plotting histograms of word frequency for the year 2017
+```{r}
+data_2017$total<-sum(data_2017$n)
+
+data_2017<-data_2017%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+
+ggplot(data_2017, aes(`term frequency`, fill = word)) +
+  geom_histogram(colour="Blue",show.legend = FALSE, bins = 30) +
+  xlim(NA, 0.0009) 
+```
+Using Zipf’s law and plotting log-log plots of word frequencies and rank for the year 2017
+```{r}
+df1<-df_2017%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)%>%
+  anti_join(stop_words,by="word")
+
+df1 <- df1 %>% filter(!word %in% irr)
+
+df1$total<-sum(df1$n)
+
+```
+
+
+```{r}
+frequency_by_rank <- df1%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+```
+
+
+```{r}
+frequency_by_rank %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_line(size = 1.1, show.legend = TRUE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset <- frequency_by_rank %>% 
+  filter(rank < 2000,
+         rank > 0)
+```
+
+
+
+```{r}
+frequency_by_rank %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_abline(intercept = -1.5015, slope = -0.7532, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+Bigram Network graphs for the year 2017
+```{r}
+df_2017_bigrams <-df_2017 %>%
+  unnest_tokens(bigram, tweet, token = "ngrams", n = 2)
+```
+
+```{r}
+df_2017_bigrams<-df_2017_bigrams %>%
+  count(bigram,sort=TRUE)
+```
+
+```{r}
+separated_bigrams_2017 <-df_2017_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+```{r}
+filtered_bigrams_2017 <- separated_bigrams_2017 %>%
+  filter(!word1 %in% c(stop_words$word,irr)) %>%
+  filter(!word2 %in% c(stop_words$word,irr))
+
+bigram_graph_2017 <- filtered_bigrams_2017 %>%
+    filter(n>5)%>%
+  graph_from_data_frame()
+
+```
+
+
+```{r}
+set.seed(2017)
+
+ggraph(bigram_graph_2017, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+
+```{r}
+set.seed(2017)
+
+df_a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph_2017, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = df_a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 4) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  labs(title = "2017", edge_width="weight") +
+  theme_void()
+```
+2018
+
+Word frequency for 2018
+
+```{r}
+data_2018<-df_2018%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)
+```
+
+Excluding stop words for the year 2018
+```{r}
+data_2018<-data_2018%>%
+  anti_join(stop_words,by="word")
+```
+
+Excluding irrelevant words to the analysis such as t.co, https, http
+```{r}
+data_2018<- data_2018 %>%
+  filter(!word %in% irr)
+```
+
+Displaying top 10 words by highest value of word frequency for the year 2018
+```{r}
+top_2018 <- head(data_2018,10)
+top_2018
+```
+
+Plotting histograms of word frequency for the year 2018
+```{r}
+data_2018$total<-sum(data_2018$n)
+
+data_2018<-data_2018%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+
+
+ggplot(data_2018, aes(`term frequency`,  fill = word)) +
+  geom_histogram(colour="red",show.legend = FALSE, bins = 30) +
+  xlim(NA, 0.0009) 
+```
+Using Zipf’s law and plotting log-log plots of word frequencies and rank for the year 2018
+```{r}
+df2<-df_2018%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)%>%
+  anti_join(stop_words,by="word")
+
+df2 <- df2 %>% filter(!word %in% irr)
+
+df2$total<-sum(df2$n)
+
+```
+
+
+```{r}
+frequency_by_rank_df2 <- df2%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+```
+
+
+```{r}
+frequency_by_rank_df2 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_line(size = 1.1, show.legend = TRUE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset_2018 <- frequency_by_rank_df2 %>% 
+  filter(rank < 2000,
+         rank > 0)
+```
+
+
+
+```{r}
+frequency_by_rank_df2 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_abline(intercept = -1.5015, slope = -0.7538, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+
+
+
+Bigram Network grapths for the year 2018
+```{r}
+B_2018_bigrams <-df_2018 %>%
+  unnest_tokens(bigram, tweet, token = "ngrams", n = 2)
+```
+
+```{r}
+B_2018_bigrams<-B_2018_bigrams %>%
+  count(bigram,sort=TRUE)
+```
+
+```{r}
+separated_bigrams_2018 <-B_2018_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+```{r}
+filtered_bigrams_2018 <- separated_bigrams_2018 %>%
+  filter(!word1 %in% c(stop_words$word,irr)) %>%
+  filter(!word2 %in% c(stop_words$word,irr))
+
+bigram_graph_2018 <- filtered_bigrams_2018 %>%
+    filter(n>6)%>%
+  graph_from_data_frame()
+```
+
+
+
+
+
+```{r}
+set.seed(2018)
+
+ggraph(bigram_graph_2018, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+SHOWING EDGES WITH WEIGHT >= 6 FOR BETTER VISUALIZATION
+```{r}
+set.seed(2018)
+
+df_b <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+##why df_a
+ggraph(bigram_graph_2018, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = df_a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  labs(title = "2018") +
+  theme_void()
+```
+2019
+
+Word frequency for 2019
+
+```{r}
+data_2019<-df_2019%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)
+```
+
+Excluding stop words for the year 2019
+```{r}
+data_2019<-data_2019%>%
+  anti_join(stop_words,by="word")
+```
+
+Excluding irrelevant words to the analysis
+```{r}
+data_2019<- data_2019 %>%
+  filter(!word %in% irr)
+```
+
+
+Displaying top 10 words by highest value of word frequency for the year 2019
+```{r}
+top_2019 <- head(data_2019,10)
+top_2019
+```
+
+Plotting histograms of word frequency for the year 2019
+```{r}
+data_2019$total<-sum(data_2019$n)
+
+data_2019<-data_2019%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+
+ggplot(data_2019, aes(`term frequency`, fill = word)) +
+  geom_histogram(colour="green",show.legend = FALSE, bins = 30) +
+  xlim(NA, 0.0009) 
+```
+
+
+Using Zipf’s law and plotting log-log plots of word frequencies and rank for the year 2019
+```{r}
+df3<-df_2019%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)%>%
+  anti_join(stop_words,by="word")
+
+df3 <-df3 %>% filter(!word %in% irr)
+df3$total<-sum(df3$n)
+
+```
+
+
+```{r}
+frequency_by_rank_df3 <- df3%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+```
+
+
+```{r}
+frequency_by_rank_df3 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = TRUE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset_2019 <- frequency_by_rank_df3 %>% 
+  filter(rank < 2000,
+         rank > 0)
+```
+
+
+
+```{r}
+frequency_by_rank_df3 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_abline(intercept = -1.5015, slope = -0.7532, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+Bigram Network grapths for the year 2019
+```{r}
+C_2019_bigrams <-df_2019 %>%
+  unnest_tokens(bigram, tweet, token = "ngrams", n = 2)
+```
+
+```{r}
+C_2019_bigrams<-C_2019_bigrams %>%
+  count(bigram,sort=TRUE)
+```
+
+```{r}
+separated_bigrams_2019 <-C_2019_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+```{r}
+filtered_bigrams_2019 <- separated_bigrams_2019 %>%
+  filter(!word1 %in% c(stop_words$word,irr)) %>%
+  filter(!word2 %in% c(stop_words$word,irr))
+```
+
+```{r}
+
+bigram_graph_2019 <- filtered_bigrams_2019 %>%
+    filter(n>12)%>%
+  graph_from_data_frame()
+bigram_graph_2019
+```
+
+
+
+
+
+```{r}
+set.seed(2019)
+
+ggraph(bigram_graph_2019, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+Visualizing edges with weight > 12 for better visualization
+```{r}
+set.seed(2020)
+
+df_c <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph_2019, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = df_a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+2020
+
+Word frequency for 2020
+
+```{r}
+data_2020<-df_2020%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)
+
+```
+
+Excluding stop words for the year 2020
+```{r}
+data_2020<-data_2020%>%
+  anti_join(stop_words,by="word")
+
+```
+
+Excluding irrelevant words to the analysis
+```{r}
+data_2020<- data_2020 %>%
+  filter(!word %in% irr)
+```
+
+Displaying top 10 words by highest value of word frequency for the year 2020
+```{r}
+top_2020 <- head(data_2020,10)
+top_2020
+```
+
+Plotting histograms of word frequency for the year 2020
+```{r}
+data_2020$total<-sum(data_2020$n)
+
+data_2020<-data_2020%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+
+```
+
+```{r}
+ggplot(data_2020, aes(`term frequency`, fill = word)) +
+  geom_histogram(colour="yellow",show.legend = FALSE, bins = 30) +
+  xlim(NA, 0.0009) 
+```
+
+Using Zipf’s law and plotting log-log plots of word frequencies and rank for the year 2020
+```{r}
+df4<-df_2020%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)%>%
+  anti_join(stop_words,by="word")
+
+df4 <- df4 %>% filter(!word %in% irr)
+df4$total<-sum(df4$n)
+
+```
+
+
+```{r}
+frequency_by_rank_df4 <- df4%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+```
+
+
+```{r}
+frequency_by_rank_df4 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = TRUE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset_2020 <- frequency_by_rank_df4 %>% 
+  filter(rank < 2000,
+         rank > 0)
+```
+
+```{r}
+frequency_by_rank_df4 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_abline(intercept = -1.5015, slope = -0.7532, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+
+#Bigram Network grapths for the year 2020
+```{r}
+D_2020_bigrams <-df_2020 %>%
+  unnest_tokens(bigram, tweet, token = "ngrams", n = 2)
+```
+
+```{r}
+D_2020_bigrams<-D_2020_bigrams %>%
+  count(bigram,sort=TRUE)
+```
+
+```{r}
+separated_bigrams_2020 <-D_2020_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+```
+
+```{r}
+filtered_bigrams_2020 <- separated_bigrams_2020 %>%
+  filter(!word1 %in% c(stop_words$word,irr)) %>%
+  filter(!word2 %in% c(stop_words$word,irr))
+```
+
+```{r}
+
+bigram_graph_2020<- filtered_bigrams_2020 %>%
+    filter(n>=15)%>%
+  graph_from_data_frame()
+bigram_graph_2020
+```
+
+
+
+
+```{r}
+set.seed(2020)
+
+ggraph(bigram_graph_2020, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+
+
+Visualizing edges with weight > 15 for better visualization
+```{r}
+set.seed(2020)
+
+df_d <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph_2020, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = df_a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+2021
+
+Word frequency for 2021
+
+```{r}
+data_2021<-df_2021%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)
+```
+
+Excluding stop words for the year 2021
+```{r}
+data_2021<-data_2021%>%
+  anti_join(stop_words,by="word")
+
+```
+
+Excluding irrelevant words to the analysis
+```{r}
+data_2021<- data_2021 %>%
+  filter(!word %in% irr)
+
+```
+
+
+Displaying top 10 words by highest value of word frequency for the year 2021
+```{r}
+top_2021 <- head(data_2021,10)
+top_2021
+```
+
+Plotting histograms of word frequency for the year 2021
+```{r}
+data_2021$total<-sum(data_2021$n)
+
+data_2021<-data_2021%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+
+
+ggplot(data_2021, aes(`term frequency`, fill = word)) +
+  geom_histogram(colour="Black",show.legend = FALSE, bins = 30) +
+  xlim(NA, 0.0009) 
+```
+
+Using Zipf’s law and plotting log-log plots of word frequencies and rank for the year 2021
+```{r}
+df5<-df_2021%>%
+ unnest_tokens(word,tweet)%>%
+  count(word, sort = TRUE)%>%
+  anti_join(stop_words,by="word")
+
+df5 <- df5 %>% filter(!word %in% irr)
+df5$total<-sum(df5$n)
+
+```
+
+
+```{r}
+frequency_by_rank_df5 <- df5%>%
+  mutate(rank=row_number(),`term frequency`= n/total)
+```
+
+
+```{r}
+frequency_by_rank_df5 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_line(size = 1.1, alpha = 0.8, show.legend = TRUE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+```{r}
+rank_subset_2021 <- frequency_by_rank_df5 %>% 
+  filter(rank < 2000,
+         rank > 0)
+```
+
+
+
+```{r}
+frequency_by_rank_df5 %>% 
+  ggplot(aes(rank, `term frequency`)) + 
+  geom_abline(intercept = -1.5015, slope = -0.7532, 
+              color = "gray50", linetype = 2) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) + 
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+
+Bigram Network grapths for the year 2021
+```{r}
+E_2021_bigrams <-df_2021 %>%
+  unnest_tokens(bigram, tweet, token = "ngrams", n = 2)
+```
+
+```{r}
+E_2021_bigrams<-E_2021_bigrams %>%
+  count(bigram,sort=TRUE)
+```
+
+```{r}
+separated_bigrams_2021 <-E_2021_bigrams %>%
+  separate(bigram, c("word1", "word2"), sep = " ")
+
+```
+
+```{r}
+filtered_bigrams_2021 <- separated_bigrams_2021 %>%
+  filter(!word1 %in% c(stop_words$word,irr)) %>%
+  filter(!word2 %in% c(stop_words$word,irr))
+
+```
+
+```{r}
+
+bigram_graph_2021<- filtered_bigrams_2021 %>%
+    filter(n>15)%>%
+  graph_from_data_frame()
+
+```
+
+
+
+
+```{r}
+set.seed(2021)
+
+ggraph(bigram_graph_2021, layout = "fr") +
+  geom_edge_link() +
+  geom_node_point() +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1)
+```
+
+Visualizing edges with weight > 15 for better visualization
+```{r}
+
+set.seed(2021)
+
+df_e <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph_2021, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = df_a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+
+Part 3 and 4 in one plot
+```{r}
+tw_2017_df <- data.frame(tweet=df_2017$tweet, year=2017)
+tw_2018_df <- data.frame(tweet=df_2018$tweet, year=2018)
+tw_2019_df <- data.frame(tweet=df_2019$tweet, year=2019)
+tw_2020_df <- data.frame(tweet=df_2020$tweet, year=2020)
+tw_2021_df <- data.frame(tweet=df_2021$tweet, year=2021)
+
+tw_df <- rbind(tw_2017_df, tw_2018_df, tw_2019_df, tw_2020_df, tw_2021_df)
+tw_words <- tw_df %>% unnest_tokens(word, tweet)
+tw_filtred <- tw_words %>% filter(!word %in% c(stop_words$word,irr))
+tw_count <- tw_filtred %>% count(year, word, sort = TRUE)
+
+total_words <- tw_count %>% 
+  group_by(year) %>% 
+  summarize(total = sum(n))
+
+tw_count <- left_join(tw_count, total_words)
+tw_count <- tw_count %>% mutate(term_frequency=n/total)
+```
+
+```{r}
+ggplot(tw_count, aes(term_frequency, fill=year)) +
+  geom_histogram(show.legend = F) +
+  xlim(NA, 0.0009) +
+  labs(x="n/total", title="world frequencies by percentage of total words(> 0.09 percentage excluded") +
+  facet_wrap(~year, ncol = 2, scales = "free_y")
+```
+```{r}
+fr_rank_all <- tw_count %>% group_by(year) %>% mutate(rank = row_number() , frequency = n/sum(n))
+
+fr_rank_all  %>%
+  ggplot(aes(x=rank, y=frequency, color=as.character(year))) +
+  geom_line(show.legend = T) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(title = "world frequency by rank for all the years", color="year")
+```
+
